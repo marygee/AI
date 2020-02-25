@@ -1,0 +1,93 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Created on Fri Feb 21 11:26:14 2020
+
+@author: mariagunnarsson
+"""
+import numpy as np
+import matplotlib.pyplot as plt
+import random
+import math
+
+
+def reader(input_list):
+    label = 1
+    index = 0
+    Y = np.array([])
+    X = np.zeros([30,2])
+    for entry in input_list:
+        file = open(entry).read().strip().split('\n')
+        for line in file:
+            Y = np.append(Y,label)
+            [x,y] = line.split('\t')
+            X[index] = [x,y]
+            index += 1
+        label = 0
+    return X,Y
+
+def scale(A):
+    max_vals = np.max(A,axis=0)
+    A[:,0] = np.true_divide(A[:,0],max_vals[0])
+    A[:,1] = np.true_divide(A[:,1],max_vals[1])
+    return A
+  
+def h_w(w,x):
+    if w@x < 0:
+        return 0
+    else:
+        return 1
+    
+def h_logistic(w,x):
+    h = 1/(1+math.exp(-w@x))
+    return h
+
+def perceptron(X,Y,alpha):
+    w = np.array([1,1])
+    h = 0
+    errors = 0
+    for m in range(0,30): 
+        index_list = list(range(len(Y)))
+        index_list.remove(m)
+        test_X = X[m,:]
+        test_Y = Y[m]
+        random.shuffle(index_list)
+        for i in index_list:
+            h = h_w(w,X[i,:])
+            w = w + alpha*(Y[i]-h)*X[i,:]    
+        if test_Y != h_w(w,test_X):
+            errors += 1
+                    
+    return w, errors
+
+def logistic_reg(X,Y,alpha):
+    w = np.array([1,1])
+    h = 0
+    errors = 0
+    for m in range(1,30): 
+        index_list = list(range(len(Y)))
+        index_list.remove(m)
+        test_X = X[m,:]
+        test_Y = Y[m]
+        random.shuffle(index_list)
+        for i in index_list:
+            h = h_logistic(w,X[i,:])
+            w = w + alpha*(Y[i]-h)*h*(1-h)*X[i,:]    
+        if test_Y != h_w(w,test_X):
+            errors += 1
+    return w, errors
+
+if __name__ == '__main__':
+    data1 = 'salammbo_a_fr.tsv'
+    data2 = 'salammbo_a_en.tsv'
+    data_list = [data1, data2]
+
+    X,Y = reader(data_list);
+    X = scale(X)
+    w, e = perceptron(X,Y,1)
+    #w, e = logistic_reg(X,Y,2)
+    print('Errors: ', e)
+
+    Y_vals = -w[0]*X[:,0]/w[1]
+    plt.plot(X[0:15,0],X[0:15,1],'bo', X[15:,0],X[15:,1],'ro')
+    plt.plot(X[:,0], Y_vals, 'g-')
