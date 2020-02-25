@@ -10,7 +10,7 @@ import matplotlib.pyplot as plt
 import random
 import math
 
-
+# Read data from files
 def reader(input_list):
     label = 1
     index = 0
@@ -26,22 +26,26 @@ def reader(input_list):
         label = 0
     return X,Y
 
+# Normalize the data
 def scale(A):
     max_vals = np.max(A,axis=0)
     A[:,0] = np.true_divide(A[:,0],max_vals[0])
     A[:,1] = np.true_divide(A[:,1],max_vals[1])
     return A
   
+# Calculate h for the perceptron    
 def h_w(w,x):
     if w@x < 0:
         return 0
     else:
         return 1
     
+# Calculate h for the logistic regression       
 def h_logistic(w,x):
     h = 1/(1+math.exp(-w@x))
     return h
 
+# Perceptron algorithm
 def perceptron(X,Y,alpha):
     w = np.array([1,1])
     h = 0
@@ -60,6 +64,7 @@ def perceptron(X,Y,alpha):
                     
     return w, errors
 
+# Logistic regression algorithm
 def logistic_reg(X,Y,alpha):
     w = np.array([1,1])
     h = 0
