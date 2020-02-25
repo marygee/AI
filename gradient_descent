@@ -1,0 +1,86 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Created on Thu Feb 13 10:30:33 2020
+
+@author: mariagunnarsson
+
+Assignment 2 Artificial Intelligence 2020
+Gradient descent method
+"""
+import numpy as np
+import matplotlib.pyplot as plt
+import random
+
+
+def texttodata(file):
+    f = open(file).read().strip().split('\n')
+    #f = strip().
+    X = []
+    Y = []
+    for line in f:  
+        line = line.split('\t')
+        X.append(int(line[0]))
+        Y.append(int(line[1]))
+    X = np.asarray(X)
+    X = np.c_[X, np.ones(len(X))]
+    Y = np.asarray(Y)
+    return [X,Y]
+
+def normalize(A):
+    maxA = np.amax(A,axis=0)
+    A = np.true_divide(A,maxA)
+    return A,maxA
+    
+
+def stochastic(x,y,alpha,w):
+    w_old = w
+    n = len(y)
+    index_list = list(range(n))
+    for epoch in range(1,500): 
+        random.shuffle(index_list)
+        for i in index_list:
+            loss = y[i] - x[i]@w
+            gradient = loss*x[i]
+            w_old = w
+            w = w + alpha*gradient
+            if np.linalg.norm(w - w_old) / np.linalg.norm(w) < 0.0005:
+                print("Epoch", epoch)
+                print("w", w[0], w[1])
+                return w
+
+    
+def batch(x,y,alpha,w):
+    w_old = w
+    for epoch in range(1,500): 
+        loss = y - x@w
+        gradient = x.T@loss
+        w_old = w
+        w = w + alpha*gradient
+        if np.linalg.norm(w - w_old) / np.linalg.norm(w) < 0.0005:
+            print("Epoch", epoch)
+            print("w", w[0], w[1])
+            return w
+
+
+if __name__ == '__main__':
+    frX,frY = texttodata('salammbo_a_fr.tsv')
+    enX,enY = texttodata('salammbo_a_en.tsv')
+    #[norm_enX,maxX] = normalize(enX)
+    #[norm_enY,maxY] = normalize(enY)
+    [norm_frX,maxX] = normalize(frX)
+    [norm_frY,maxY] = normalize(frY)
+
+   # w1 = (norm_enY[1]-norm_enY[0])/(norm_enX[1,0]-norm_enX[0,0])
+   # w0 = norm_enY[1] - w1*norm_enX[1,0]
+    w1 = (norm_frY[1]-norm_frY[0])/(norm_frX[1,0]-norm_frX[0,0])
+    w0 = norm_frY[1] - w1*norm_frX[1,0]
+    w_start = [w1,w0]
+    print(w_start)
+    
+    w = stochastic(norm_frX,norm_frY,0.01,w_start) 
+    #w = batch(norm_frX,norm_frY,0.01,w_start)
+
+    w_restored = [w[0]*maxY/maxX[0], w[1]*maxY] 
+    print('w_restored', w_restored)
+    plt.plot(frX[:,0],frY,'bo', frX[:,0], np.dot(frX,w_restored))
