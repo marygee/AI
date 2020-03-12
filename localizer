@@ -11,19 +11,16 @@ import java.util.ArrayList;
  *
  */
 public class Localizer implements EstimatorInterface {
-	/*
-	 * return the number of assumed rows, columns and possible headings for the grid
-	 * a number of four headings makes obviously most sense... the viewer can handle 
-	 * four headings at maximum in a useful way.
-	 */
 	
 	private int rows, cols, head, true_x, true_y, true_head;
+	private double nbr_est = 0;
+	private double tot_est = 0;
+	private double corr_est = 0;
 	
 	private static final int NORTH = 0;
 	private static final int EAST = 1;
 	private static final int SOUTH = 2;
 	private static final int WEST = 3;
-	private static final int ALPHA = 1;
 	
 	private static final int[][] HEADINGS = {{-1,0},{0,1},{1,0},{0,-1}};
 	
@@ -37,13 +34,13 @@ public class Localizer implements EstimatorInterface {
 		this.rows = rows;
 		this.cols = cols;
 		this.head = head;
-//		Random rand = new Random();
-//		true_x = rand.nextInt(rows);
-//		true_y = rand.nextInt(cols);
-//		true_head = rand.nextInt(4);
-		true_x = 0;
-		true_y = 0;
-		true_head = EAST;
+		Random rand = new Random();
+		true_x = rand.nextInt(rows);
+		true_y = rand.nextInt(cols);
+		true_head = rand.nextInt(4);
+//		true_x = 0;
+//		true_y = 0;
+//		true_head = EAST;
 
 		createTmatrix();
 		createTransposeT();
@@ -58,13 +55,39 @@ public class Localizer implements EstimatorInterface {
 	 * after the method has been called once.
 	 */
 	public void update() {
-		int true_head = getNewHeading();
-		int[] d = HEADINGS[true_head];
-		true_x += d[0];
-		true_y += d[1];
-		int[] currRead = getCurrentReading();
+		Random r = new Random();
+		boolean nextInside = insideBound(true_x, true_y, HEADINGS[true_head][0], HEADINGS[true_head][1]);
+		double rand = r.nextDouble();
+		double[][] nextO;
+	
+		if (!nextInside || rand > 0.7) { 
+			int new_head = getNewHeading(true_head); 
+			true_head = new_head;
+		}
 		
-		updateF(currRead[0], currRead[1]);
+		true_x += HEADINGS[true_head][0]; 
+		true_y += HEADINGS[true_head][1];
+		int[] currRead = getCurrentReading(); 
+		
+		if (currRead == null) {
+			nextO = Omatrix(rows-1,cols);
+			
+		} else {
+			nextO = Omatrix(currRead[0], currRead[1]);
+		}
+		updateF(nextO);
+		int dist = findManhattanDist();
+		if (dist == 0) {
+			corr_est++;
+		} 
+		nbr_est++;
+		tot_est += dist;
+		double corr = corr_est/nbr_est;
+//		System.out.println("Nbr: " + nbr_est + " Dist: : " + dist);
+
+		System.out.println("Nbr: " + nbr_est + " Share correct predictions: : " + corr);
+	
+
 	}
 	
 	/*
@@ -112,7 +135,7 @@ public class Localizer implements EstimatorInterface {
 	/*
 	 * Returns the probability of transition from (x,y,h) to (nx,ny,nh).
 	 */
-	public double getProb(int x, int y, int h, int nx, int ny, int nh) {
+	private double getProb(int x, int y, int h, int nx, int ny, int nh) {
 		int directions = 0;
 		
 		if (insideBound(x,y,1,0)) {
@@ -142,11 +165,11 @@ public class Localizer implements EstimatorInterface {
 	}
 	
 	/*
-	 * Creates the observation vectors O. Each observation vector in one row. Last column 
-	 * represents reading "nothing".
+	 * Creates the observation vectors O. Each observation vector in one row. Last row 
+	 * represents probability for "nothing" reading for each cell.
 	 */
 	private void createOvectors() {
-		O_VECTORS = new double[rows*cols][rows*cols+1];	
+		O_VECTORS = new double[rows*cols+1][rows*cols];	
 		
 		for (int i = 0; i < rows*cols; i++) {
 			int j = 0;
@@ -185,7 +208,7 @@ public class Localizer implements EstimatorInterface {
 				nullProb -= O_VECTORS[i][j];
 			}
 			NULL_READ[xI][yI] = nullProb;
-			O_VECTORS[i][O_VECTORS[i].length - 1] = nullProb;
+			O_VECTORS[O_VECTORS.length - 1][i] = nullProb;
 		}
 	}
 	
@@ -208,19 +231,22 @@ public class Localizer implements EstimatorInterface {
 	 */
 	public int[] getCurrentReading() {
 		int index = true_x*cols + true_y;
-		int nullIndex = rows*cols;
-		ArrayList<Double> readings = new ArrayList<Double>(16);
-		ArrayList<Integer> states = new ArrayList<Integer>(16);
+		int nullIndex = rows*cols+1;
+		ArrayList<Double> readings = new ArrayList<Double>(rows*cols);
+		ArrayList<Integer> states = new ArrayList<Integer>(rows*cols);
 		int[] read = new int[2];
 		Random r = new Random();
 		
-		for (int j = 0; j < rows*cols+1; j++) {
+		for (int j = 0; j < rows*cols; j++) {
 			 double currProb = O_VECTORS[index][j];
 			if (currProb != 0) {
 				readings.add(currProb);
 				states.add(j);
 			}
 		}
+		double nullProb = O_VECTORS[O_VECTORS.length-1][index];
+		states.add(nullIndex);
+		readings.add(nullProb);
 		
 		double countProb = 0.0;
 		double rand = r.nextDouble();
@@ -242,21 +268,29 @@ public class Localizer implements EstimatorInterface {
 		return null;
 	}
 	
-	public int getNewHeading() {
+	/*
+	 * Returns a new heading, which will not be the same as the input head.
+	 */
+	private int getNewHeading(int head) {
 		Random r = new Random();
 		ArrayList<Integer> headings = new ArrayList<Integer>(4); 
 		if (insideBound(true_x,true_y,-1,0)) {
-			headings.add(NORTH);
+			headings.add(0);
 		}
 		if (insideBound(true_x,true_y,0,1)) {
-			headings.add(EAST);
+			headings.add(1);
 		}
 		if (insideBound(true_x,true_y,1,0)) {
-			headings.add(SOUTH);
+			headings.add(2);
 		}
 		if (insideBound(true_x,true_y,0,-1)) {
-			headings.add(WEST);
+			headings.add(3);
 		}
+		
+		if (headings.contains(head)) {
+			headings.remove(Integer.valueOf(head));
+		}
+	
 		return headings.get(r.nextInt(headings.size()));
 	}
 	
@@ -266,11 +300,15 @@ public class Localizer implements EstimatorInterface {
 	 * view somewhat unclear.
 	 */
 	public double getCurrentProb(int x, int y) {
-		return 0;
+		double prob = 0.0;		
+		for (int i = 0; i < head; i++) {
+			prob += F_VECTOR[x*cols*head + y*head + i];
+		}
+		return prob;
 	}
 
 	/*
-	 * returns the probability entry of the sensor matrices O to get reading r corresponding 
+	 * Returns the probability entry of the sensor matrices O to get reading r corresponding 
 	 * to position (rX, rY) when actually in position (x, y) (note that you have to take 
 	 * care of potentially necessary transformations from states i = <x, y, h> to 
 	 * positions (x, y)).
@@ -286,7 +324,7 @@ public class Localizer implements EstimatorInterface {
 	}
 
 	/*
-	 * returns the probability entry (Tij) of the transition matrix T to go from pose 
+	 * Returns the probability entry (Tij) of the transition matrix T to go from pose 
 	 * i = (x, y, h) to pose j = (nX, nY, nH)
 	 */	
 	public double getTProb(int x, int y, int h, int nX, int nY, int nH) {
@@ -296,7 +334,7 @@ public class Localizer implements EstimatorInterface {
 	}
 
 	/*
-	 * Create the first position estimate; the F-vector.
+	 * Create the first F-vector with equal probabilities for each state. 
 	 */
 	private void firstF() {
 		int n = rows*cols*head;
@@ -308,17 +346,44 @@ public class Localizer implements EstimatorInterface {
 	}
 	
 	/*
-	 * Updates vector F.
+	 * Updates vector F according to the forward filtering algorithm and normalizes it.
 	 */
-	private void updateF(int x, int y) {
+	private void updateF(double[][] nextO) {
 		double[] nextF = new double[F_VECTOR.length];
-		double[][] nextO = Omatrix(x,y);
+		double alpha = 0.0;
 		nextF = matrixVectorMult(T_TRANSPOSE, F_VECTOR);
 		nextF = matrixVectorMult(nextO, nextF);
 		for (int i = 0; i < F_VECTOR.length; i++) {
-			nextF[i] = ALPHA*nextF[i];
+			alpha += nextF[i];
+		}
+		for (int i = 0; i < F_VECTOR.length; i++) {
+			nextF[i] /= alpha;
 		}
 		F_VECTOR = nextF;
+	}
+	
+	private int[] getPrediction() {
+		double highestProb = 0.0;
+		double currProb;
+		int[] prediction = new int[2];
+		
+		for (int i = 0; i < rows; i++) {
+			for (int j = 0; j < cols; j++) {
+				currProb = getCurrentProb(i,j);
+				if (currProb > highestProb) {
+					highestProb = currProb;
+					prediction[0] = i;
+					prediction[1] = j;
+				}
+			}
+		}
+
+		return prediction;
+	}
+	
+	private int findManhattanDist() {
+		int[] pred = getPrediction();
+		return Math.abs(pred[0] - true_x) + Math.abs(pred[1] - true_y);
 	}
 	
 	/*
@@ -345,7 +410,7 @@ public class Localizer implements EstimatorInterface {
 	/*
 	 * Creates an observation matrix O for the position (x,y). 
 	 */
-	public double[][] Omatrix(int x, int y) {
+	private double[][] Omatrix(int x, int y) {
 		int n = rows*cols*head;
 		int index = x*cols + y;
 		double[][] Omatrix = new double[n][n];
@@ -365,7 +430,7 @@ public class Localizer implements EstimatorInterface {
 	/*
 	 * Creates the transpose of the matrix T_MATRIX: T_TRANSPOSE.
 	 */
-	public void createTransposeT() {
+	private void createTransposeT() {
 		int n = rows*cols*head;
 		T_TRANSPOSE = new double[n][n];
 			for (int i = 0; i < n; i++) {
@@ -389,60 +454,17 @@ public class Localizer implements EstimatorInterface {
 			}
 		}
 		return ans;
-	}
-
-	/*
-	 * Matrix multiplication.
-	 */
-	private double[][] matrixMultiplication(double[][] a, double[][] b) {
-		int m = a.length;
-		int n = b[0].length;
-		int c = b.length;
-		double[][] ans = new double[m][n];
-
-		for (int i = 0; i < m; i++) {
-			for (int j = 0; j < n; j++) {
-				for (int k = 0; k < c; k++) {
-					ans[i][j] += a[i][k]*b[k][i];
-				}
-			}
-		}
-		return ans;
 	}	
-
-	private void printT() {
-		int n = rows*cols*head;
-		for (int i = 0; i < n; i++) {
-			for (int j = 0; j < n; j++) {
-				System.out.print(T_MATRIX[i][j] + " ");			
-			}
-			System.out.print("\n");
-		}	
+	
+	public static void main( String[] args) {
+		Localizer local = new Localizer(4,4,4);
+		local.getCurrentTrueState();
+		System.out.println("getCurrentTrueState ok"+ "\n");
+		local.getCurrentReading();
+		System.out.println("getCurrentReading ok" + "\n");
+		local.update();
+		System.out.println("update ok" + "\n");
+		
 	}
-	
-	private void printO() {
-		int n = rows*cols;
-		for (int i = 0; i < n; i++) {
-			for (int j = 0; j < n+1; j++) {
-				System.out.print(O_VECTORS[i][j] + " ");			
-			}
-			System.out.print("\n");
-		}	
-	}
-	
-
-	
-//	public static void main( String[] args) {
-//		Localizer local = new Localizer(4,4,4);
-//		local.getCurrentTrueState();
-//		System.out.println("getCurrentTrueState ok"+ "\n");
-//		local.getCurrentReading();
-//		System.out.println("getCurrentReading ok" + "\n");
-//		local.update();
-//		System.out.println("update ok" + "\n");
-
-//		local.printO();
-//		local.printNull();	
-//	}
 }
 
