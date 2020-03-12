@@ -1,0 +1,448 @@
+package model;
+
+import control.EstimatorInterface;
+
+import java.util.Random;
+import java.lang.Math;
+import java.util.ArrayList;
+
+/**
+ * @author mariagunnarsson
+ *
+ */
+public class Localizer implements EstimatorInterface {
+	/*
+	 * return the number of assumed rows, columns and possible headings for the grid
+	 * a number of four headings makes obviously most sense... the viewer can handle 
+	 * four headings at maximum in a useful way.
+	 */
+	
+	private int rows, cols, head, true_x, true_y, true_head;
+	
+	private static final int NORTH = 0;
+	private static final int EAST = 1;
+	private static final int SOUTH = 2;
+	private static final int WEST = 3;
+	private static final int ALPHA = 1;
+	
+	private static final int[][] HEADINGS = {{-1,0},{0,1},{1,0},{0,-1}};
+	
+	private double[][] T_MATRIX;
+	private double[][] O_VECTORS;
+	private double[][] NULL_READ;
+	private double[][] T_TRANSPOSE;
+	private double[] F_VECTOR;
+	
+	public Localizer(int rows, int cols, int head) {
+		this.rows = rows;
+		this.cols = cols;
+		this.head = head;
+//		Random rand = new Random();
+//		true_x = rand.nextInt(rows);
+//		true_y = rand.nextInt(cols);
+//		true_head = rand.nextInt(4);
+		true_x = 0;
+		true_y = 0;
+		true_head = EAST;
+
+		createTmatrix();
+		createTransposeT();
+		createOvectors();
+		createNullRead();
+		firstF();
+	}
+	
+	/*
+	 * should trigger one step of the estimation, i.e., true position, sensor reading and 
+	 * the probability distribution for the position estimate should be updated one step
+	 * after the method has been called once.
+	 */
+	public void update() {
+		int true_head = getNewHeading();
+		int[] d = HEADINGS[true_head];
+		true_x += d[0];
+		true_y += d[1];
+		int[] currRead = getCurrentReading();
+		
+		updateF(currRead[0], currRead[1]);
+	}
+	
+	/*
+	 * Creates the transition matrix T.
+	 */
+	private void createTmatrix() {
+		int n = rows*cols*head;
+		T_MATRIX = new double[n][n];
+		int iHead = NORTH;
+		int jHead = NORTH;
+		int iX, iY, jX, jY;
+		
+		for (int i = 0; i < n; i++) {
+			iX = i/(rows*head);
+			iY = i/head % rows;
+			
+			for (int j = 0; j < n; j++) {
+				jX = j/(rows*head);
+				jY = j/head % rows;
+			
+				T_MATRIX[i][j] = getProb(iX,iY,iHead,jX,jY,jHead);
+				
+				if (jHead == WEST) {
+					jHead = NORTH;
+				} else {
+					jHead++;
+				}
+			}
+			if (iHead == WEST) {
+				iHead = NORTH;
+			} else {
+				iHead++;
+			} 
+		}
+	}
+	
+	/*
+	 * Check if position (x,y) plus movement (dx,dy) is inside the bound.
+	 * Returns true if it is. 
+	 */
+	private boolean insideBound(int x, int y, int dx, int dy) {
+		return (x + dx) >= 0 && (x + dx) < rows && (y + dy) >= 0 && (y + dy) < cols;
+	}
+	
+	/*
+	 * Returns the probability of transition from (x,y,h) to (nx,ny,nh).
+	 */
+	public double getProb(int x, int y, int h, int nx, int ny, int nh) {
+		int directions = 0;
+		
+		if (insideBound(x,y,1,0)) {
+			directions++;
+		}
+		if (insideBound(x,y,-1,0)) {
+			directions++;
+		}
+		if (insideBound(x,y,0,1)) {
+			directions++;
+		}
+		if (insideBound(x,y,0,-1)) {
+			directions++;
+		}
+		if ((x + HEADINGS[nh][0] == nx) && (y + HEADINGS[nh][1] == ny)) {
+			if (nh == h) {
+				return 0.7;
+			} else {
+				if (!insideBound(x,y,HEADINGS[h][0], HEADINGS[h][1])) {
+					return (1.0/directions);
+				} else {
+					return (0.3/(directions-1));
+				}				
+			}
+		}
+		return 0.0;
+	}
+	
+	/*
+	 * Creates the observation vectors O. Each observation vector in one row. Last column 
+	 * represents reading "nothing".
+	 */
+	private void createOvectors() {
+		O_VECTORS = new double[rows*cols][rows*cols+1];	
+		
+		for (int i = 0; i < rows*cols; i++) {
+			int j = 0;
+			int xI = i/rows;
+			int yI = i%rows;
+			for (int x = 0; x < rows; x++) {
+				for (int y = 0; y < cols; y++) {
+					int dist = (int) Math.sqrt(Math.pow(x-xI,2) + Math.pow(y-yI,2));
+					if (dist == 0) {
+						O_VECTORS[i][j] = 0.1;
+					} else if (dist == 1) {
+						O_VECTORS[i][j] = 0.05;
+					} else if (dist == 2) {
+						O_VECTORS[i][j] = 0.025;
+					} else {
+						O_VECTORS[i][j] = 0.0;
+					}
+					j++;		
+				}
+			}
+		}
+	}
+	
+	/*
+	 * Creates a matrix with the probabilities of a null reading and adds the 
+	 * probabilities to the O vectors in the last column of the matrix.
+	 */
+	private void createNullRead() {
+		NULL_READ = new double[rows][cols];
+		for (int i = 0; i < rows*cols; i++) {
+			double nullProb = 1.0;
+			int xI = i/rows;
+			int yI = i%rows;
+			
+			for (int j = 0; j < rows*cols; j++) {
+				nullProb -= O_VECTORS[i][j];
+			}
+			NULL_READ[xI][yI] = nullProb;
+			O_VECTORS[i][O_VECTORS[i].length - 1] = nullProb;
+		}
+	}
+	
+	/*
+	 * returns the currently known true position i.e., after one simulation step
+	 * of the robot as (x,y)-pair.
+	 */
+	public int[] getCurrentTrueState() {
+		int[] state = new int[3];
+		state[0] = true_x;
+		state[1] = true_y;
+		state[2] = true_head;
+		return state;
+	}
+	
+	/*
+	 * returns the currently available sensor reading obtained for the true position 
+	 * after the simulation step 
+	 * returns null if the reading was "nothing" (whatever that stands for in your model)
+	 */
+	public int[] getCurrentReading() {
+		int index = true_x*cols + true_y;
+		int nullIndex = rows*cols;
+		ArrayList<Double> readings = new ArrayList<Double>(16);
+		ArrayList<Integer> states = new ArrayList<Integer>(16);
+		int[] read = new int[2];
+		Random r = new Random();
+		
+		for (int j = 0; j < rows*cols+1; j++) {
+			 double currProb = O_VECTORS[index][j];
+			if (currProb != 0) {
+				readings.add(currProb);
+				states.add(j);
+			}
+		}
+		
+		double countProb = 0.0;
+		double rand = r.nextDouble();
+		int i = 0;
+		
+		while (i < readings.size()) {
+			countProb += readings.get(i);
+			if (countProb > rand) {
+				if (states.get(i) == nullIndex) {
+					return null;
+				} else {
+					read[0] = states.get(i)/rows;
+					read[1] = states.get(i)%rows;
+					return read;					
+				}
+			}
+			i++;
+		}
+		return null;
+	}
+	
+	public int getNewHeading() {
+		Random r = new Random();
+		ArrayList<Integer> headings = new ArrayList<Integer>(4); 
+		if (insideBound(true_x,true_y,-1,0)) {
+			headings.add(NORTH);
+		}
+		if (insideBound(true_x,true_y,0,1)) {
+			headings.add(EAST);
+		}
+		if (insideBound(true_x,true_y,1,0)) {
+			headings.add(SOUTH);
+		}
+		if (insideBound(true_x,true_y,0,-1)) {
+			headings.add(WEST);
+		}
+		return headings.get(r.nextInt(headings.size()));
+	}
+	
+	/*
+	 * returns the currently estimated (summed) probability for the robot to be in position
+	 * (x,y) in the grid. The different headings are not considered, as it makes the 
+	 * view somewhat unclear.
+	 */
+	public double getCurrentProb(int x, int y) {
+		return 0;
+	}
+
+	/*
+	 * returns the probability entry of the sensor matrices O to get reading r corresponding 
+	 * to position (rX, rY) when actually in position (x, y) (note that you have to take 
+	 * care of potentially necessary transformations from states i = <x, y, h> to 
+	 * positions (x, y)).
+	 */
+	public double getOrXY(int rX, int rY, int x, int y, int h) {
+		if (rX == -1 || rY == -1) {
+			return NULL_READ[x][y];
+		} else {
+			int i = x*cols + y;
+			int j = rX*cols + rY;
+			return O_VECTORS[i][j];
+		}
+	}
+
+	/*
+	 * returns the probability entry (Tij) of the transition matrix T to go from pose 
+	 * i = (x, y, h) to pose j = (nX, nY, nH)
+	 */	
+	public double getTProb(int x, int y, int h, int nX, int nY, int nH) {
+		int indexI = x*rows*head + (y%rows)*head + h;
+		int indexJ = nX*rows*head + (nY%rows)*head + nH;
+		return T_MATRIX[indexI][indexJ];
+	}
+
+	/*
+	 * Create the first position estimate; the F-vector.
+	 */
+	private void firstF() {
+		int n = rows*cols*head;
+		double val = 1.0/n;
+		F_VECTOR = new double[n];
+		for (int i = 0; i < n; i++) {
+			F_VECTOR[i] = val;
+		}
+	}
+	
+	/*
+	 * Updates vector F.
+	 */
+	private void updateF(int x, int y) {
+		double[] nextF = new double[F_VECTOR.length];
+		double[][] nextO = Omatrix(x,y);
+		nextF = matrixVectorMult(T_TRANSPOSE, F_VECTOR);
+		nextF = matrixVectorMult(nextO, nextF);
+		for (int i = 0; i < F_VECTOR.length; i++) {
+			nextF[i] = ALPHA*nextF[i];
+		}
+		F_VECTOR = nextF;
+	}
+	
+	/*
+	 * Return number of rows.
+	 */
+	public int getNumRows() {
+		return rows;
+	}
+	
+	/*
+	 * Return number of columns.
+	 */
+	public int getNumCols() {
+		return cols;
+	}
+
+	/*
+	 * Return number of headings. 
+	 */
+	public int getNumHead() {
+		return head;
+	}
+	
+	/*
+	 * Creates an observation matrix O for the position (x,y). 
+	 */
+	public double[][] Omatrix(int x, int y) {
+		int n = rows*cols*head;
+		int index = x*cols + y;
+		double[][] Omatrix = new double[n][n];
+		for (int i = 0; i < n; i++) {
+			for (int j = 0; j < n; j++) {
+				if (i == j) {
+					int col = i / head;
+					Omatrix[i][j] = O_VECTORS[index][col];
+				} else {
+					Omatrix[i][j] = 0;
+				}
+			}
+		}
+		return Omatrix;		
+	}
+	
+	/*
+	 * Creates the transpose of the matrix T_MATRIX: T_TRANSPOSE.
+	 */
+	public void createTransposeT() {
+		int n = rows*cols*head;
+		T_TRANSPOSE = new double[n][n];
+			for (int i = 0; i < n; i++) {
+				for (int j = 0; j < n; j++) {
+					T_TRANSPOSE[i][j] = T_MATRIX[j][i];
+				}
+			}
+	}
+	
+	/*
+	 * Matrix-vector multiplication.
+	 */
+	private double[] matrixVectorMult(double[][] a, double[] b) {
+		int m = a.length;
+		int c = b.length;
+		double[] ans = new double[a.length];
+
+		for (int i = 0; i < m; i++) {
+			for (int k = 0; k < c; k++) {
+				ans[i] += a[i][k]*b[k];
+			}
+		}
+		return ans;
+	}
+
+	/*
+	 * Matrix multiplication.
+	 */
+	private double[][] matrixMultiplication(double[][] a, double[][] b) {
+		int m = a.length;
+		int n = b[0].length;
+		int c = b.length;
+		double[][] ans = new double[m][n];
+
+		for (int i = 0; i < m; i++) {
+			for (int j = 0; j < n; j++) {
+				for (int k = 0; k < c; k++) {
+					ans[i][j] += a[i][k]*b[k][i];
+				}
+			}
+		}
+		return ans;
+	}	
+
+	private void printT() {
+		int n = rows*cols*head;
+		for (int i = 0; i < n; i++) {
+			for (int j = 0; j < n; j++) {
+				System.out.print(T_MATRIX[i][j] + " ");			
+			}
+			System.out.print("\n");
+		}	
+	}
+	
+	private void printO() {
+		int n = rows*cols;
+		for (int i = 0; i < n; i++) {
+			for (int j = 0; j < n+1; j++) {
+				System.out.print(O_VECTORS[i][j] + " ");			
+			}
+			System.out.print("\n");
+		}	
+	}
+	
+
+	
+//	public static void main( String[] args) {
+//		Localizer local = new Localizer(4,4,4);
+//		local.getCurrentTrueState();
+//		System.out.println("getCurrentTrueState ok"+ "\n");
+//		local.getCurrentReading();
+//		System.out.println("getCurrentReading ok" + "\n");
+//		local.update();
+//		System.out.println("update ok" + "\n");
+
+//		local.printO();
+//		local.printNull();	
+//	}
+}
+
